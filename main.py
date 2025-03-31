@@ -1,20 +1,16 @@
-
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-
-"""
-Cricket Game Management Telegram Bot
-Main entry point for the application
-"""
 
 import os
 import logging
 import signal
 import sys
 import time
+import threading
 from telegram.ext import Updater
 from bot import setup_bot
 from db import init_db
+from flask import Flask
 
 # Enable logging
 logging.basicConfig(
@@ -24,36 +20,36 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+# Flask server to keep Render happy
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running!"
+
 # Global variable to store the updater instance
 updater = None
 
 def signal_handler(sig, frame):
     """Handle termination signals to gracefully shut down the bot"""
     global updater
-    
     if updater:
         logger.info(f"Received signal {sig}. Shutting down the bot gracefully...")
-        # Stop the bot
         updater.stop()
-        # Wait a moment to ensure cleanup
         time.sleep(1)
-    
     logger.info("Bot has been shut down.")
     sys.exit(0)
 
-def main():
+def start_bot():
     """Start the bot"""
     global updater
     
-    # Set up signal handlers for graceful shutdown
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
-    # Initialize the database
     logger.info("Initializing database...")
     init_db()
     
-    # Initialize default strategies
     try:
         from db import initialize_default_strategies
         logger.info("Initializing default team strategies...")
@@ -63,7 +59,6 @@ def main():
         
     logger.info("Database initialized successfully")
     
-    # Check for environment variables
     token = os.environ.get('TELEGRAM_BOT_TOKEN')
     if not token:
         logger.error("TELEGRAM_BOT_TOKEN environment variable not set")
@@ -75,12 +70,10 @@ def main():
     else:
         logger.info(f"Admin IDs loaded successfully")
     
-    # Initialize and start the bot
     try:
         logger.info("Setting up the bot...")
         updater = setup_bot()
         
-        # Start the bot's polling with drop_pending_updates=True to prevent conflicts
         logger.info("Starting polling...")
         updater.start_polling(
             drop_pending_updates=True, 
@@ -90,13 +83,10 @@ def main():
             poll_interval=1.0
         )
         logger.info("Bot started successfully")
-        
-        # Run the bot until the process receives a termination signal
         updater.idle()
     except Exception as e:
         logger.error(f"Error in bot operation: {e}")
         logger.exception("Detailed error information:")
-        # Make sure to clean up when an exception happens
         if updater:
             try:
                 updater.stop()
@@ -105,4 +95,10 @@ def main():
         sys.exit(1)
 
 if __name__ == '__main__':
-    main()
+    # Start the bot in a separate thread
+    bot_thread = threading.Thread(target=start_bot)
+    bot_thread.start()
+    
+    # Start Flask server to satisfy Render's web service requirement
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
